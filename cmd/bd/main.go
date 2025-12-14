@@ -97,12 +97,12 @@ var (
 )
 
 var (
-	noAutoFlush  bool
-	noAutoImport bool
-	sandboxMode  bool
-	allowStale   bool // Use --allow-stale: skip staleness check (emergency escape hatch)
-	noDb         bool // Use --no-db mode: load from JSONL, write back after each command
-	readonlyMode bool // Read-only mode: block write operations (for worker sandboxes)
+	noAutoFlush    bool
+	noAutoImport   bool
+	sandboxMode    bool
+	allowStale     bool // Use --allow-stale: skip staleness check (emergency escape hatch)
+	noDb           bool // Use --no-db mode: load from JSONL, write back after each command
+	readonlyMode   bool // Read-only mode: block write operations (for worker sandboxes)
 	profileEnabled bool
 	profileFile    *os.File
 	traceFile      *os.File
@@ -663,8 +663,14 @@ var rootCmd = &cobra.Command{
 		if store != nil {
 			_ = store.Close()
 		}
-		if profileFile != nil { pprof.StopCPUProfile(); _ = profileFile.Close() }
-		if traceFile != nil { trace.Stop(); _ = traceFile.Close() }
+		if profileFile != nil {
+			pprof.StopCPUProfile()
+			_ = profileFile.Close()
+		}
+		if traceFile != nil {
+			trace.Stop()
+			_ = traceFile.Close()
+		}
 
 		// Cancel the signal context to clean up resources
 		if rootCancel != nil {

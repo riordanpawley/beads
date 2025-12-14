@@ -74,7 +74,6 @@ func isWorktreeWithoutSyncBranch() bool {
 	return getDaemonDisableReason() == DaemonDisabledWorktree
 }
 
-
 // restartDaemonForVersionMismatch stops the old daemon and starts a new one
 // Returns true if restart was successful
 func restartDaemonForVersionMismatch() bool {

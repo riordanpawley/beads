@@ -72,18 +72,18 @@ func IsWorktree() bool {
 	if gitDir == "" {
 		return false
 	}
-	
+
 	commonDir := getGitDirNoError("--git-common-dir")
 	if commonDir == "" {
 		return false
 	}
-	
+
 	absGit, err1 := filepath.Abs(gitDir)
 	absCommon, err2 := filepath.Abs(commonDir)
 	if err1 != nil || err2 != nil {
 		return false
 	}
-	
+
 	return absGit != absCommon
 }
 
