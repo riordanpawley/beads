@@ -30,7 +30,7 @@ func syncBranchCommitAndPushWithOptions(ctx context.Context, store storage.Stora
 	if !hasGitRemote(ctx) {
 		return true, nil // Skip sync branch commit/push in local-only mode
 	}
-	
+
 	// Get sync branch configuration (supports BEADS_SYNC_BRANCH override)
 	syncBranch, err := syncbranch.Get(ctx, store)
 	if err != nil {
@@ -41,32 +41,35 @@ func syncBranchCommitAndPushWithOptions(ctx context.Context, store storage.Stora
 	if syncBranch == "" {
 		return false, nil
 	}
-	
+
 	log.log("Using sync branch: %s", syncBranch)
-	
+
 	// Get main repo root (for worktrees, this is the main repo, not worktree)
 	repoRoot, err := git.GetMainRepoRoot()
 	if err != nil {
 		return false, fmt.Errorf("failed to get main repo root: %w", err)
 	}
-	
-	// Use worktree-aware git directory detection
-	gitDir, err := git.GetGitDir()
+
+	// Use the common git directory (shared by all worktrees)
+	// This ensures all worktrees use the same internal beads worktree location
+	gitDir, err := git.GetGitCommonDir()
 	if err != nil {
 		return false, fmt.Errorf("not a git repository: %w", err)
 	}
-	
+
 	// Worktree path is under .git/beads-worktrees/<branch>
+	// Using common git dir ensures this is the same path regardless of which
+	// user worktree the daemon was started from
 	worktreePath := filepath.Join(gitDir, "beads-worktrees", syncBranch)
-	
+
 	// Initialize worktree manager
 	wtMgr := git.NewWorktreeManager(repoRoot)
-	
+
 	// Ensure worktree exists
 	if err := wtMgr.CreateBeadsWorktree(syncBranch, worktreePath); err != nil {
 		return false, fmt.Errorf("failed to create worktree: %w", err)
 	}
-	
+
 	// Check worktree health and repair if needed
 	if err := wtMgr.CheckWorktreeHealth(worktreePath); err != nil {
 		log.log("Worktree health check failed, attempting repair: %v", err)
@@ -78,20 +81,20 @@ func syncBranchCommitAndPushWithOptions(ctx context.Context, store storage.Stora
 			return false, fmt.Errorf("failed to recreate worktree after health check: %w", err)
 		}
 	}
-	
+
 	// Sync JSONL file to worktree
 	// Get the actual JSONL path (could be issues.jsonl, beads.base.jsonl, etc.)
 	jsonlPath := findJSONLPath()
 	if jsonlPath == "" {
 		return false, fmt.Errorf("JSONL path not found")
 	}
-	
+
 	// Convert absolute path to relative path from repo root
 	jsonlRelPath, err := filepath.Rel(repoRoot, jsonlPath)
 	if err != nil {
 		return false, fmt.Errorf("failed to get relative JSONL path: %w", err)
 	}
-	
+
 	// Use SyncJSONLToWorktreeWithOptions to pass forceOverwrite flag.
 	// When forceOverwrite is true (mutation-triggered sync, especially delete),
 	// the local JSONL is copied directly without merging, ensuring deletions
@@ -100,26 +103,26 @@ func syncBranchCommitAndPushWithOptions(ctx context.Context, store storage.Stora
 	if err := wtMgr.SyncJSONLToWorktreeWithOptions(worktreePath, jsonlRelPath, syncOpts); err != nil {
 		return false, fmt.Errorf("failed to sync JSONL to worktree: %w", err)
 	}
-	
+
 	// Check for changes in worktree
 	worktreeJSONLPath := filepath.Join(worktreePath, jsonlRelPath)
 	hasChanges, err := gitHasChangesInWorktree(ctx, worktreePath, worktreeJSONLPath)
 	if err != nil {
 		return false, fmt.Errorf("failed to check for changes in worktree: %w", err)
 	}
-	
+
 	if !hasChanges {
 		log.log("No changes to commit in sync branch")
 		return false, nil
 	}
-	
+
 	// Commit in worktree
 	message := fmt.Sprintf("bd daemon sync: %s", time.Now().Format("2006-01-02 15:04:05"))
 	if err := gitCommitInWorktree(ctx, worktreePath, worktreeJSONLPath, message); err != nil {
 		return false, fmt.Errorf("failed to commit in worktree: %w", err)
 	}
 	log.log("Committed changes to sync branch %s", syncBranch)
-	
+
 	// Push if enabled
 	if autoPush {
 		if err := gitPushFromWorktree(ctx, worktreePath, syncBranch); err != nil {
@@ -127,7 +130,7 @@ func syncBranchCommitAndPushWithOptions(ctx context.Context, store storage.Stora
 		}
 		log.log("Pushed sync branch %s to remote", syncBranch)
 	}
-	
+
 	return true, nil
 }
 
@@ -148,7 +151,7 @@ func gitHasChangesInWorktree(ctx context.Context, worktreePath, filePath string)
 	if err != nil {
 		return false, fmt.Errorf("failed to make path relative: %w", err)
 	}
-	
+
 	cmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "status", "--porcelain", relPath) // #nosec G204 - worktreePath and relPath are derived from trusted git operations
 	output, err := cmd.Output()
 	if err != nil {
@@ -164,13 +167,13 @@ func gitCommitInWorktree(ctx context.Context, worktreePath, filePath, message st
 	if err != nil {
 		return fmt.Errorf("failed to make path relative: %w", err)
 	}
-	
+
 	// Stage the file
 	addCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "add", relPath) // #nosec G204 - worktreePath and relPath are derived from trusted git operations
 	if err := addCmd.Run(); err != nil {
 		return fmt.Errorf("git add failed in worktree: %w", err)
 	}
-	
+
 	// Commit with --no-verify to skip hooks (pre-commit hook would fail in worktree context)
 	// The worktree is internal to bd sync, so we don't need to run bd's pre-commit hook
 	commitCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "commit", "--no-verify", "-m", message)
@@ -178,7 +181,7 @@ func gitCommitInWorktree(ctx context.Context, worktreePath, filePath, message st
 	if err != nil {
 		return fmt.Errorf("git commit failed in worktree: %w\n%s", err, output)
 	}
-	
+
 	return nil
 }
 
@@ -192,14 +195,14 @@ func gitPushFromWorktree(ctx context.Context, worktreePath, branch string) error
 		remoteOutput = []byte("origin\n")
 	}
 	remote := strings.TrimSpace(string(remoteOutput))
-	
+
 	// Push with explicit remote and branch, set upstream if not set
 	cmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "push", "--set-upstream", remote, branch) // #nosec G204 - worktreePath, remote, and branch are from config
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git push failed from worktree: %w\n%s", err, output)
 	}
-	
+
 	return nil
 }
 
@@ -210,7 +213,7 @@ func syncBranchPull(ctx context.Context, store storage.Storage, log daemonLogger
 	if !hasGitRemote(ctx) {
 		return true, nil // Skip sync branch pull in local-only mode
 	}
-	
+
 	// Get sync branch configuration (supports BEADS_SYNC_BRANCH override)
 	syncBranch, err := syncbranch.Get(ctx, store)
 	if err != nil {
@@ -221,30 +224,33 @@ func syncBranchPull(ctx context.Context, store storage.Storage, log daemonLogger
 	if syncBranch == "" {
 		return false, nil
 	}
-	
+
 	// Get main repo root (for worktrees, this is the main repo, not worktree)
 	repoRoot, err := git.GetMainRepoRoot()
 	if err != nil {
 		return false, fmt.Errorf("failed to get main repo root: %w", err)
 	}
-	
-	// Use worktree-aware git directory detection
-	gitDir, err := git.GetGitDir()
+
+	// Use the common git directory (shared by all worktrees)
+	// This ensures all worktrees use the same internal beads worktree location
+	gitDir, err := git.GetGitCommonDir()
 	if err != nil {
 		return false, fmt.Errorf("not a git repository: %w", err)
 	}
-	
+
 	// Worktree path is under .git/beads-worktrees/<branch>
+	// Using common git dir ensures this is the same path regardless of which
+	// user worktree the daemon was started from
 	worktreePath := filepath.Join(gitDir, "beads-worktrees", syncBranch)
-	
+
 	// Initialize worktree manager
 	wtMgr := git.NewWorktreeManager(repoRoot)
-	
+
 	// Ensure worktree exists
 	if err := wtMgr.CreateBeadsWorktree(syncBranch, worktreePath); err != nil {
 		return false, fmt.Errorf("failed to create worktree: %w", err)
 	}
-	
+
 	// Get remote name
 	remoteCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "config", "--get", fmt.Sprintf("branch.%s.remote", syncBranch)) // #nosec G204 - worktreePath and syncBranch are from config
 	remoteOutput, err := remoteCmd.Output()
@@ -253,38 +259,38 @@ func syncBranchPull(ctx context.Context, store storage.Storage, log daemonLogger
 		remoteOutput = []byte("origin\n")
 	}
 	remote := strings.TrimSpace(string(remoteOutput))
-	
+
 	// Pull in worktree
 	cmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "pull", remote, syncBranch) // #nosec G204 - worktreePath, remote, and syncBranch are from config
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return false, fmt.Errorf("git pull failed in worktree: %w\n%s", err, output)
 	}
-	
+
 	log.log("Pulled sync branch %s", syncBranch)
-	
+
 	// Get the actual JSONL path
 	jsonlPath := findJSONLPath()
 	if jsonlPath == "" {
 		return false, fmt.Errorf("JSONL path not found")
 	}
-	
+
 	// Convert to relative path
 	jsonlRelPath, err := filepath.Rel(repoRoot, jsonlPath)
 	if err != nil {
 		return false, fmt.Errorf("failed to get relative JSONL path: %w", err)
 	}
-	
+
 	// Copy JSONL back to main repo
 	worktreeJSONLPath := filepath.Join(worktreePath, jsonlRelPath)
 	mainJSONLPath := jsonlPath
-	
+
 	// Check if worktree JSONL exists
 	if _, err := os.Stat(worktreeJSONLPath); os.IsNotExist(err) {
 		// No JSONL in worktree yet, nothing to sync
 		return true, nil
 	}
-	
+
 	// Copy JSONL from worktree to main repo
 	data, err := os.ReadFile(worktreeJSONLPath) // #nosec G304 - path is derived from trusted git worktree
 	if err != nil {
@@ -294,8 +300,8 @@ func syncBranchPull(ctx context.Context, store storage.Storage, log daemonLogger
 	if err := os.WriteFile(mainJSONLPath, data, 0644); err != nil { // #nosec G306 - JSONL needs to be readable
 		return false, fmt.Errorf("failed to write main JSONL: %w", err)
 	}
-	
+
 	log.log("Synced JSONL from sync branch to main repo")
-	
+
 	return true, nil
 }

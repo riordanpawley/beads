@@ -31,53 +31,52 @@ Main Repository
 - ✅ **Concurrent access** - SQLite locking prevents corruption
 - ✅ **Git integration** - Issues sync via JSONL in main repo
 
-### Worktree Detection & Warnings
+### Daemon Handling
 
-bd automatically detects when you're in a git worktree and provides appropriate guidance:
+bd automatically detects git worktrees and adjusts daemon behavior:
 
-```bash
-# In a worktree with daemon active
-$ bd ready
-╔══════════════════════════════════════════════════════════════════════════╗
-║ WARNING: Git worktree detected with daemon mode                         ║
-╠══════════════════════════════════════════════════════════════════════════╣
-║ Git worktrees share the same .beads directory, which can cause the      ║
-║ daemon to commit/push to the wrong branch.                               ║
-║                                                                          ║
-║ Shared database: /path/to/main/.beads                                    ║
-║ Worktree git dir: /path/to/shared/.git                                   ║
-║                                                                          ║
-║ RECOMMENDED SOLUTIONS:                                                   ║
-║   1. Use --no-daemon flag:    bd --no-daemon <command>                   ║
-║   2. Disable daemon mode:     export BEADS_NO_DAEMON=1                   ║
-╚══════════════════════════════════════════════════════════════════════════╝
-```
+1. **Default (no sync-branch):** Daemon auto-disabled → direct mode
+2. **With sync-branch:** Daemon enabled → commits to dedicated branch
 
 ## Usage Patterns
 
-### Recommended: Direct Mode in Worktrees
+### Option 1: Direct Mode (Default)
+
+No configuration needed. Daemon is automatically disabled in worktrees:
 
 ```bash
-# Disable daemon for worktree usage
-export BEADS_NO_DAEMON=1
-
-# Work normally - all commands work correctly
 cd feature-worktree
 bd create "Implement feature X" -t feature -p 1
-bd update bd-a1b2 --status in_progress
 bd ready
 bd sync  # Manual sync when needed
 ```
 
-### Alternative: Daemon in Main Repo Only
+### Option 2: Enable Daemon with Sync Branch
+
+For background auto-sync in worktrees, configure a sync branch:
+
+```yaml
+# .beads/config.yaml
+sync-branch: beads-sync
+```
 
 ```bash
-# Use daemon only in main repository
-cd main-repo
-bd ready  # Daemon works here
+cd feature-worktree
+bd ready  # Daemon enabled, auto-syncs to beads-sync branch
+```
 
-# Use direct mode in worktrees
-cd ../feature-worktree
+With sync branch configured:
+- All worktrees commit to the same dedicated branch
+- No risk of committing to wrong feature branch
+- Daemon works safely across all worktrees
+
+### Manual Daemon Disable
+
+To explicitly disable daemon (overrides sync-branch):
+
+```bash
+export BEADS_NO_DAEMON=1
+# or
 bd --no-daemon ready
 ```
 
@@ -158,14 +157,17 @@ bd create "Fix password validation" -t bug -p 0
 
 ### Issue: Daemon commits to wrong branch
 
-**Symptoms:** Changes appear on unexpected branch in git history
+Daemon is automatically disabled in worktrees (unless sync-branch configured).
 
-**Solution:**
+**Option 1: Use sync branch (recommended for auto-sync)**
+```yaml
+# .beads/config.yaml
+sync-branch: beads-sync
+```
+
+**Option 2: Disable daemon**
 ```bash
-# Disable daemon in worktrees
 export BEADS_NO_DAEMON=1
-# Or use --no-daemon flag for individual commands
-bd --no-daemon sync
 ```
 
 ### Issue: Database not found in worktree
@@ -253,14 +255,13 @@ bd config set sync.auto_push true         # Auto-push changes
 
 ### After (Enhanced Worktree Support)
 
+- ✅ **Safe by default** - Daemon auto-disabled unless sync-branch configured
+- ✅ **Sync branch option** - Enable daemon in worktrees with dedicated sync branch
 - ✅ Shared database architecture
 - ✅ Automatic worktree detection
-- ✅ Clear user guidance and warnings
 - ✅ Comprehensive documentation
 - ✅ Git hooks work correctly
 - ✅ All bd commands function properly
-
-**Note:** Based on comprehensive internal testing. Real-world usage may reveal additional refinements needed.
 
 ## Examples in the Wild
 

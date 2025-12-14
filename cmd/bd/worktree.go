@@ -9,6 +9,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
 // isGitWorktree detects if the current directory is in a git worktree.
@@ -37,19 +38,37 @@ func getWorktreeGitDir() string {
 	return gitDir
 }
 
-// warnWorktreeDaemon prints a warning if using daemon with worktrees
+// warnWorktreeDaemon prints info/warning if using daemon with worktrees
 // Call this only when daemon mode is actually active (connected)
 func warnWorktreeDaemon(dbPathForWarning string) {
 	if !isGitWorktree() {
 		return
 	}
-	
-	gitDir := getWorktreeGitDir()
+
 	beadsDir := filepath.Dir(dbPathForWarning)
 	if beadsDir == "." || beadsDir == "" {
 		beadsDir = dbPathForWarning
 	}
-	
+
+	// Check if sync branch is configured - if so, daemon is safe
+	syncBranch := syncbranch.GetFromYAML()
+	if syncBranch != "" {
+		// Sync branch configured - just an informational note
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "╔══════════════════════════════════════════════════════════════════════════╗")
+		fmt.Fprintln(os.Stderr, "║ INFO: Git worktree with sync branch configured                          ║")
+		fmt.Fprintln(os.Stderr, "╠══════════════════════════════════════════════════════════════════════════╣")
+		fmt.Fprintf(os.Stderr, "║ Sync branch: %-59s ║\n", truncateForBox(syncBranch, 59))
+		fmt.Fprintf(os.Stderr, "║ Shared database: %-55s ║\n", truncateForBox(beadsDir, 55))
+		fmt.Fprintln(os.Stderr, "║                                                                          ║")
+		fmt.Fprintln(os.Stderr, "║ Daemon will commit to the sync branch, which is safe for worktrees.     ║")
+		fmt.Fprintln(os.Stderr, "╚══════════════════════════════════════════════════════════════════════════╝")
+		fmt.Fprintln(os.Stderr)
+		return
+	}
+
+	// No sync branch - show warning (user explicitly started daemon)
+	gitDir := getWorktreeGitDir()
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "╔══════════════════════════════════════════════════════════════════════════╗")
 	fmt.Fprintln(os.Stderr, "║ WARNING: Git worktree detected with daemon mode                         ║")
@@ -60,12 +79,10 @@ func warnWorktreeDaemon(dbPathForWarning string) {
 	fmt.Fprintf(os.Stderr, "║ Shared database: %-55s ║\n", truncateForBox(beadsDir, 55))
 	fmt.Fprintf(os.Stderr, "║ Worktree git dir: %-54s ║\n", truncateForBox(gitDir, 54))
 	fmt.Fprintln(os.Stderr, "║                                                                          ║")
-	fmt.Fprintln(os.Stderr, "║ RECOMMENDED SOLUTIONS:                                                   ║")
-	fmt.Fprintln(os.Stderr, "║   1. Use --no-daemon flag:    bd --no-daemon <command>                   ║")
-	fmt.Fprintln(os.Stderr, "║   2. Disable daemon mode:     export BEADS_NO_DAEMON=1                   ║")
+	fmt.Fprintln(os.Stderr, "║ RECOMMENDED: Configure sync-branch in .beads/config.yaml:               ║")
+	fmt.Fprintln(os.Stderr, "║   sync-branch: beads-sync                                                ║")
 	fmt.Fprintln(os.Stderr, "║                                                                          ║")
-	fmt.Fprintln(os.Stderr, "║ Note: BEADS_AUTO_START_DAEMON=false only prevents auto-start;           ║")
-	fmt.Fprintln(os.Stderr, "║       you can still connect to a running daemon.                         ║")
+	fmt.Fprintln(os.Stderr, "║ Or disable daemon: export BEADS_NO_DAEMON=1                              ║")
 	fmt.Fprintln(os.Stderr, "╚══════════════════════════════════════════════════════════════════════════╝")
 	fmt.Fprintln(os.Stderr)
 }
@@ -102,23 +119,23 @@ func warnMultipleDatabases(currentDB string) {
 	fmt.Fprintln(os.Stderr, "╠══════════════════════════════════════════════════════════════════════════╣")
 	fmt.Fprintln(os.Stderr, "║ Multiple databases can cause confusion and database pollution.          ║")
 	fmt.Fprintln(os.Stderr, "║                                                                          ║")
-	
+
 	for i, db := range databases {
 		isActive := (i == activeIdx)
 		issueInfo := ""
 		if db.IssueCount >= 0 {
 			issueInfo = fmt.Sprintf(" (%d issues)", db.IssueCount)
 		}
-		
+
 		marker := " "
 		if isActive {
 			marker = "▶"
 		}
-		
+
 		line := fmt.Sprintf("%s %s%s", marker, db.BeadsDir, issueInfo)
 		fmt.Fprintf(os.Stderr, "║ %-72s ║\n", truncateForBox(line, 72))
 	}
-	
+
 	fmt.Fprintln(os.Stderr, "║                                                                          ║")
 	if activeIdx == 0 {
 		fmt.Fprintln(os.Stderr, "║ Currently using the closest database (▶). This is usually correct.      ║")

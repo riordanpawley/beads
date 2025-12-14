@@ -51,6 +51,7 @@ const (
 	FallbackAutoStartDisabled = "auto_start_disabled"
 	FallbackAutoStartFailed   = "auto_start_failed"
 	FallbackDaemonUnsupported = "daemon_unsupported"
+	FallbackWorktreeNoSync    = "worktree_no_sync_branch"
 )
 
 var (
@@ -96,12 +97,12 @@ var (
 )
 
 var (
-	noAutoFlush  bool
-	noAutoImport bool
-	sandboxMode  bool
-	allowStale   bool // Use --allow-stale: skip staleness check (emergency escape hatch)
-	noDb         bool // Use --no-db mode: load from JSONL, write back after each command
-	readonlyMode bool // Read-only mode: block write operations (for worker sandboxes)
+	noAutoFlush    bool
+	noAutoImport   bool
+	sandboxMode    bool
+	allowStale     bool // Use --allow-stale: skip staleness check (emergency escape hatch)
+	noDb           bool // Use --no-db mode: load from JSONL, write back after each command
+	readonlyMode   bool // Read-only mode: block write operations (for worker sandboxes)
 	profileEnabled bool
 	profileFile    *os.File
 	traceFile      *os.File
@@ -377,13 +378,21 @@ var rootCmd = &cobra.Command{
 
 		// Initialize daemon status
 		socketPath := getSocketPath()
+		autoStartEnabled := shouldAutoStartDaemon()
+
+		// Set initial fallback reason based on why daemon is disabled
+		initialFallbackReason := FallbackNone
+		if !autoStartEnabled && isWorktreeWithoutSyncBranch() {
+			initialFallbackReason = FallbackWorktreeNoSync
+		}
+
 		daemonStatus = DaemonStatus{
 			Mode:             "direct",
 			Connected:        false,
 			Degraded:         true,
 			SocketPath:       socketPath,
-			AutoStartEnabled: shouldAutoStartDaemon(),
-			FallbackReason:   FallbackNone,
+			AutoStartEnabled: autoStartEnabled,
+			FallbackReason:   initialFallbackReason,
 		}
 
 		// Try to connect to daemon first (unless --no-daemon flag is set)
@@ -537,7 +546,11 @@ var rootCmd = &cobra.Command{
 				// Auto-start disabled - preserve the actual failure reason
 				// Don't override connect_failed or health_failed with auto_start_disabled
 				// This preserves important diagnostic info (daemon crashed vs not running)
-				debug.Logf("auto-start disabled by BEADS_AUTO_START_DAEMON")
+				if isWorktreeWithoutSyncBranch() {
+					debug.Logf("auto-start disabled in worktree (no sync branch configured)")
+				} else {
+					debug.Logf("auto-start disabled by BEADS_AUTO_START_DAEMON")
+				}
 			}
 
 			// Emit BD_VERBOSE warning if falling back to direct mode
@@ -650,8 +663,14 @@ var rootCmd = &cobra.Command{
 		if store != nil {
 			_ = store.Close()
 		}
-		if profileFile != nil { pprof.StopCPUProfile(); _ = profileFile.Close() }
-		if traceFile != nil { trace.Stop(); _ = traceFile.Close() }
+		if profileFile != nil {
+			pprof.StopCPUProfile()
+			_ = profileFile.Close()
+		}
+		if traceFile != nil {
+			trace.Stop()
+			_ = traceFile.Close()
+		}
 
 		// Cancel the signal context to clean up resources
 		if rootCancel != nil {
