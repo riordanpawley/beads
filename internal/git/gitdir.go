@@ -22,6 +22,19 @@ func GetGitDir() (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
+// GetGitCommonDir returns the common .git directory shared by all worktrees.
+// In a normal repo, this is the same as GetGitDir().
+// In a worktree, this returns the main repository's .git directory.
+// This is useful for placing files that should be shared across all worktrees.
+func GetGitCommonDir() (string, error) {
+	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("not a git repository: %w", err)
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
 // GetGitHooksDir returns the path to the Git hooks directory.
 // This function is worktree-aware and handles both regular repos and worktrees.
 func GetGitHooksDir() (string, error) {

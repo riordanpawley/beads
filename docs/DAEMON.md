@@ -356,37 +356,33 @@ export BEADS_WATCHER_FALLBACK=false
 export BEADS_AUTO_START_DAEMON=false
 ```
 
-## Git Worktrees Warning
+## Git Worktrees
 
-**⚠️ Important Limitation:** Daemon mode does NOT work correctly with `git worktree`.
+**Default Behavior:** Daemon is **automatically disabled** in git worktrees to prevent wrong-branch commits.
 
 **The Problem:**
 - Git worktrees share the same `.git` directory and `.beads` database
-- Daemon doesn't know which branch each worktree has checked out
-- Can commit/push to wrong branch
+- A single daemon can't know which branch each worktree has checked out
+- Without special handling, daemon might commit/push to the wrong branch
 
-**Solutions:**
+**The Solution:**
 
-1. **Use `--no-daemon` flag** (recommended):
-   ```bash
-   bd --no-daemon ready
-   bd --no-daemon create "Fix bug" -p 1
-   ```
+1. **Default (no config):** Daemon auto-disabled in worktrees → direct mode
+2. **With sync-branch:** Daemon allowed → commits to dedicated sync branch
 
-2. **Disable via environment** (entire session):
-   ```bash
-   export BEADS_NO_DAEMON=1
-   bd ready  # All commands use direct mode
-   ```
+**To enable daemon in worktrees**, configure a sync branch:
 
-3. **Disable auto-start** (less safe):
-   ```bash
-   export BEADS_AUTO_START_DAEMON=false
-   ```
+```yaml
+# .beads/config.yaml
+sync-branch: beads-sync
+```
 
-**Automatic detection:** bd detects worktrees and warns if daemon is active.
+With sync branch:
+- All worktrees commit to the same dedicated branch (e.g., `beads-sync`)
+- No risk of committing to the wrong feature branch
+- Daemon works safely across all worktrees
 
-See [GIT_INTEGRATION.md](GIT_INTEGRATION.md) for more details.
+See [WORKTREES.md](WORKTREES.md) for comprehensive worktree documentation.
 
 ## Exclusive Lock Protocol (Advanced)
 

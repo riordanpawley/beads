@@ -50,13 +50,16 @@ func syncBranchCommitAndPushWithOptions(ctx context.Context, store storage.Stora
 		return false, fmt.Errorf("failed to get main repo root: %w", err)
 	}
 	
-	// Use worktree-aware git directory detection
-	gitDir, err := git.GetGitDir()
+	// Use the common git directory (shared by all worktrees)
+	// This ensures all worktrees use the same internal beads worktree location
+	gitDir, err := git.GetGitCommonDir()
 	if err != nil {
 		return false, fmt.Errorf("not a git repository: %w", err)
 	}
-	
+
 	// Worktree path is under .git/beads-worktrees/<branch>
+	// Using common git dir ensures this is the same path regardless of which
+	// user worktree the daemon was started from
 	worktreePath := filepath.Join(gitDir, "beads-worktrees", syncBranch)
 	
 	// Initialize worktree manager
@@ -228,13 +231,16 @@ func syncBranchPull(ctx context.Context, store storage.Storage, log daemonLogger
 		return false, fmt.Errorf("failed to get main repo root: %w", err)
 	}
 	
-	// Use worktree-aware git directory detection
-	gitDir, err := git.GetGitDir()
+	// Use the common git directory (shared by all worktrees)
+	// This ensures all worktrees use the same internal beads worktree location
+	gitDir, err := git.GetGitCommonDir()
 	if err != nil {
 		return false, fmt.Errorf("not a git repository: %w", err)
 	}
-	
+
 	// Worktree path is under .git/beads-worktrees/<branch>
+	// Using common git dir ensures this is the same path regardless of which
+	// user worktree the daemon was started from
 	worktreePath := filepath.Join(gitDir, "beads-worktrees", syncBranch)
 	
 	// Initialize worktree manager

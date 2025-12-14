@@ -11,7 +11,9 @@ import (
 
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
+	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
 // Daemon start failure tracking for exponential backoff
@@ -20,17 +22,56 @@ var (
 	daemonStartFailures    int
 )
 
-// shouldAutoStartDaemon checks if daemon auto-start is enabled
-func shouldAutoStartDaemon() bool {
+// DaemonDisableReason indicates why daemon auto-start is disabled
+type DaemonDisableReason int
+
+const (
+	// DaemonEnabled means daemon auto-start is enabled
+	DaemonEnabled DaemonDisableReason = iota
+	// DaemonDisabledEnvVar means BEADS_NO_DAEMON is set
+	DaemonDisabledEnvVar
+	// DaemonDisabledWorktree means we're in a worktree without sync branch
+	DaemonDisabledWorktree
+	// DaemonDisabledConfig means auto-start is disabled via config
+	DaemonDisabledConfig
+)
+
+// getDaemonDisableReason returns why daemon auto-start is disabled (or DaemonEnabled if not)
+func getDaemonDisableReason() DaemonDisableReason {
 	// Check BEADS_NO_DAEMON first (escape hatch for single-user workflows)
 	noDaemon := strings.ToLower(strings.TrimSpace(os.Getenv("BEADS_NO_DAEMON")))
 	if noDaemon == "1" || noDaemon == "true" || noDaemon == "yes" || noDaemon == "on" {
-		return false // Explicit opt-out
+		return DaemonDisabledEnvVar
 	}
 
-	// Use viper to read from config file or BEADS_AUTO_START_DAEMON env var
-	// Viper handles BEADS_AUTO_START_DAEMON automatically via BindEnv
-	return config.GetBool("auto-start-daemon") // Defaults to true
+	// Auto-disable daemon in git worktrees (unless sync branch is configured)
+	// Worktrees share the same .beads directory, so a single daemon can't reliably
+	// know which branch to commit to.
+	//
+	// However, if sync-branch is configured, all commits go to that dedicated branch
+	// regardless of which worktree is active. The internal beads worktree uses
+	// git-common-dir so it's the same location for all worktrees.
+	if git.IsWorktree() && !syncbranch.IsConfigured() {
+		debug.Logf("auto-disabling daemon in worktree (no sync branch configured)")
+		return DaemonDisabledWorktree
+	}
+
+	// Check config file setting
+	if !config.GetBool("auto-start-daemon") {
+		return DaemonDisabledConfig
+	}
+
+	return DaemonEnabled
+}
+
+// shouldAutoStartDaemon checks if daemon auto-start is enabled
+func shouldAutoStartDaemon() bool {
+	return getDaemonDisableReason() == DaemonEnabled
+}
+
+// isWorktreeWithoutSyncBranch returns true if we're in a worktree without sync branch configured
+func isWorktreeWithoutSyncBranch() bool {
+	return getDaemonDisableReason() == DaemonDisabledWorktree
 }
 
 
@@ -378,6 +419,10 @@ func emitVerboseWarning() {
 		fmt.Fprintf(os.Stderr, "Warning: Failed to auto-start daemon. Running in direct mode. Hint: bd daemon --status\n")
 	case FallbackDaemonUnsupported:
 		fmt.Fprintf(os.Stderr, "Warning: Daemon does not support this command yet. Running in direct mode. Hint: update daemon or use local mode.\n")
+	case FallbackWorktreeNoSync:
+		// Informational message - not a scary warning since this is expected behavior
+		fmt.Fprintf(os.Stderr, "Info: Daemon disabled in git worktree (shared database). Running in direct mode.\n")
+		fmt.Fprintf(os.Stderr, "      To enable daemon: configure sync-branch in .beads/config.yaml\n")
 	case FallbackFlagNoDaemon:
 		// Don't warn when user explicitly requested --no-daemon
 		return
